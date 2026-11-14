@@ -1,0 +1,15 @@
+cni:
+  - multus
+  - canal
+cluster-cidr: 10.42.0.0/16
+service-cidr: 10.43.0.0/16
+cluster-dns: 10.43.0.10
+disable:
+  - rke2-snapshot-controller
+  - rke2-snapshot-controller-crd
+  - rke2-snapshot-validation-webhook
+selinux: true
+kubelet-arg:
+  - "max-pods=250"
+  - "cpu-manager-policy=static"
+  - "kube-reserved=cpu=500m,memory=1Gi"

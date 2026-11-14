@@ -1,0 +1,18 @@
+manifestURI: file://./suse-virtualization.yaml
+components:
+  systemd:
+    - extension: "suse-storage"
+  kubernetes: {}
+  helm:
+    - chart: elemental-lifecycle-manager
+    - chart: rancher
+      valuesFile: rancher.yaml
+    - chart: harvester
+    - chart: harvester-crd
+    - chart: harvester-addons
+    - chart: rancher-monitoring-crd
+    - chart: cert-manager
+    - chart: suse-storage
+      credentials:
+        username: snip
+        password: snip

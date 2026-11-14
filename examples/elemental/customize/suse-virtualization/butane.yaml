@@ -1,0 +1,144 @@
+version: 1.1.0
+variant: flatcar
+passwd:
+  users:
+  - name: root
+    password_hash: "[snip]"
+storage:
+  files:
+    - path: /etc/ssh/sshd_config.d/root-login.conf
+      mode: 0600
+      contents:
+        inline: PermitRootLogin yes
+    - path: /etc/systemd/system/iscsi-init.service.d/override.conf
+      mode: 0644
+      contents:
+        inline: |
+          [Service]
+          ExecStartPre=/usr/bin/mkdir -p /etc/iscsi
+    - path: /root/.bashrc
+      mode: 0644
+      append:
+        - inline: |
+            # Add RKE2 binaries to PATH and set KUBECONFIG
+            export PATH=$PATH:/var/lib/rancher/rke2/bin
+            export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
+    - path: /etc/modules-load.d/longhorn.conf
+      mode: 0644
+      contents:
+        inline: |
+          iscsi_tcp
+          vfio_pci
+          uio_pci_generic
+          nvme-tcp
+          dm_crypt
+          nfs
+          br_netfilter
+          8021q
+          bonding
+          vhost_net
+    - path: /etc/sysctl.d/90-harvester.conf
+      mode: 0644
+      contents:
+        inline: |
+          fs.inotify.max_user_instances = 8192
+          fs.inotify.max_user_watches = 524288
+    - path: /etc/NetworkManager/conf.d/90-harvester-unmanaged.conf
+      mode: 0644
+      contents:
+        inline: |
+          [keyfile]
+          unmanaged-devices=interface-name:cali*;interface-name:flannel*;interface-name:veth*;interface-name:*-br;interface-name:*-br.*;interface-name:*-bo;except:interface-name:mgmt-br;except:interface-name:mgmt-bo
+    - path: /etc/rancher/rke2/harvester-e3-bootstrap.sh
+      mode: 0755
+      overwrite: true
+      contents:
+        inline: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          export PATH="/var/lib/rancher/rke2/bin:/usr/local/bin:/usr/bin:/bin"
+          export KUBECONFIG="/etc/rancher/rke2/rke2.yaml"
+
+          mkdir -p /var/oem
+
+          echo "Waiting for local RKE2 API server..."
+          until kubectl get nodes >/dev/null 2>&1; do
+            sleep 5
+          done
+
+          echo "1. Waiting for suse-storage StorageClass initialization..."
+          until kubectl get storageclass longhorn-static >/dev/null 2>&1; do
+            sleep 5
+          done
+          if kubectl get storageclass longhorn >/dev/null 2>&1; then
+            kubectl patch storageclass longhorn \
+           -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+          fi
+
+          echo "2. Marking Rancher local cluster provider as harvester..."
+          until kubectl get clusters.management.cattle.io local -o jsonpath='{.status.provider}' 2>/dev/null | grep -q .; do
+            sleep 5
+          done
+          kubectl label clusters.management.cattle.io local provider.cattle.io=harvester --overwrite
+          kubectl patch clusters.management.cattle.io local \
+            --subresource=status --type=merge \
+            -p '{"status":{"provider":"harvester"}}'
+
+          echo "3. Redirecting harvester-node-manager /oem hostPath to /var/oem..."
+          until kubectl -n harvester-system get ds harvester-node-manager >/dev/null 2>&1; do
+            sleep 5
+          done
+          VOL_IDX=$(kubectl -n harvester-system get ds harvester-node-manager \
+            -o jsonpath='{range .spec.template.spec.volumes[*]}{.hostPath.path}{"\n"}{end}' \
+            | grep -nx '/oem' | cut -d: -f1 || true)
+          if [ -n "$VOL_IDX" ]; then
+            kubectl -n harvester-system patch ds harvester-node-manager --type=json \
+              -p "[{\"op\":\"replace\",\"path\":\"/spec/template/spec/volumes/$((VOL_IDX - 1))/hostPath/path\",\"value\":\"/var/oem\"}]"
+          fi
+
+          echo "Harvester Elemental 3 bootstrap complete."
+systemd:
+  units:
+    - name: sshd.service
+      enabled: true
+    - name: start-iscsid.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Start iSCSI Daemon
+        After=network-online.target
+        Wants=network-online.target
+
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/bin/systemctl start iscsid.service
+        RemainAfterExit=yes
+
+        [Install]
+        WantedBy=multi-user.target
+    - name: harvester-e3-bootstrap.path
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Watch for RKE2 kubeconfig for Harvester Standalone Glue
+
+        [Path]
+        PathExists=/etc/rancher/rke2/rke2.yaml
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: harvester-e3-bootstrap.service
+      enabled: false
+      contents: |
+        [Unit]
+        Description=Harvester Standalone Glue for Elemental 3
+        After=rke2-server.service
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        Restart=on-failure
+        RestartSec=10s
+        ExecStart=/etc/rancher/rke2/harvester-e3-bootstrap.sh

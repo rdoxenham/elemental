@@ -1,0 +1,6 @@
+schema: v0
+bootloader: grub
+kernelCmdLine: "console=hvc0 debug loglevel=3 hugepagesz=2M hugepages=1024"
+raw:
+  diskSize: 128G
+cryptoPolicy: default

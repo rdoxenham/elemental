@@ -1,0 +1,25 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: rke2-traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    providers:
+      kubernetesIngress:
+        publishedService:
+          enabled: true
+    ports:
+      web:
+        hostPort: null
+        exposedPort: 80
+      websecure:
+        hostPort: null
+        exposedPort: 443
+    service:
+      enabled: true
+      type: LoadBalancer
+      spec:
+        type: LoadBalancer
+        externalTrafficPolicy: Local
+        allocateLoadBalancerNodePorts: false
